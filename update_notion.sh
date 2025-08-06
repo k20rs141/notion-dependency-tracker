@@ -9,7 +9,7 @@ set -eo pipefail
 # ── (B) プロジェクトルートに移動 と チェックサム確認 ──
 cd "${SRCROOT:-.}" || exit 1
 
-readonly CACHE_FILE="${SRCROOT}/Scripts/.update_notion.cache"
+readonly CACHE_FILE="Scripts/.update_notion.cache"
 
 # 依存ファイルからチェックサムを生成
 # Package.resolved はパスが変わる可能性があるため find で探す
