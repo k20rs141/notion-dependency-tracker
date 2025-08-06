@@ -25,9 +25,7 @@ export NOTION_TOKEN="your_notion_integration_token"
 export NOTION_DATABASE_ID="your_database_id"
 ```
 
-または、`Scripts/secrets.sh` ファイルに記述して source で読み込むことも可能です：
-
-※`Scripts/secrets.sh` ファイルを.gitignoreに追加することを忘れずに！
+セキュリティのため、これらの変数は `Scripts/secrets.sh` ファイルに記述し、`.gitignore` に追加してリポジトリに含めないようにすることを推奨します。
 
 ```bash
 # Scripts/secrets.sh
@@ -48,8 +46,6 @@ export NOTION_DATABASE_ID="your_database_id"
 | パッケージマネージャー | Select | "CocoaPods" または "SwiftPM" |
 | 更新日時 | Date | 最後に更新された日時 |
 
-
-
 ### Select プロパティの設定
 
 「パッケージマネージャー」プロパティには以下のオプションを設定してください：
@@ -68,63 +64,67 @@ source Scripts/secrets.sh  # 環境変数を読み込み
 
 ### Xcode Build Phase での自動実行
 
-Xcode プロジェクトの Build Phases に「Run Script」を追加：
+Xcode プロジェクトの **Build Phases** にある `[CP] Check Pods Manifest.lock` の直後に新しい「Run Script Phase」を追加し、以下のスクリプトを記述します。
 
 ```bash
-source "${SRCROOT}/Scripts/secrets.sh"
+# 環境変数を読み込む
+if [ -f "${SRCROOT}/Scripts/secrets.sh" ]; then
+  source "${SRCROOT}/Scripts/secrets.sh"
+fi
+
+# スクリプトを実行する
 "${SRCROOT}/Scripts/update_notion.sh"
 ```
+
+この設定により、ビルド時にライブラリの依存関係が解決された後で、自動的にNotionが更新されます。
 
 ## 機能詳細
 
 ### 1. 依存関係の抽出
 
 #### CocoaPods (Podfile.lock)
-- メインライブラリとそのバージョンを抽出
-- コロン(:)で終わる行のみを対象とし、入れ子の依存関係は無視
-- 例：`- Adjust (5.4.0):` のような形式のライブラリのみを取得
+- メインライブラリとそのバージョンを抽出します。
+- 入れ子の依存関係は無視されます。
 
 #### SwiftPM (Package.resolved)
-- パッケージ名とバージョン（またはコミットハッシュ）を抽出
-- JSON形式のファイルを Ruby で解析
+- パッケージ名とバージョン（またはコミットハッシュ）を抽出します。
 
 ### 2. 重複チェックと更新
 
-- ライブラリ名 + パッケージマネージャーの組み合わせで既存レコードを検索
-- 既存の場合：バージョンと更新日時のみ更新
-- 新規の場合：新しいレコードを作成
+- 「ライブラリ名」と「パッケージマネージャー」の組み合わせで、Notion上の既存レコードを検索します。
+- 既存の場合はバージョンと更新日時を更新し、新規の場合はレコードを作成します。
 
-### 3. キャッシュ機能
+### 3. キャッシュ機能 (`.update_notion.cache`)
 
-- Podfile.lock と Package.resolved のチェックサムを計算
-- 前回実行時と変更がない場合はスキップ
-- ビルド時間の短縮に貢献
+- スクリプトは、`Podfile.lock` と `Package.resolved` の内容からチェックサム（ファイルの内容を要約した文字列）を生成します。
+- Notionへの更新が成功すると、このチェックサムを `Scripts/.update_notion.cache` というファイルに保存します。このファイルは、**初回実行時に自動で作成されます**。
+- 2回目以降の実行時には、まずこのキャッシュファイルに保存された前回のチェックサムと、現在の依存関係から生成した新しいチェックサムを比較します。
+- チェックサムが同じであれば、ライブラリに変更はないと判断し、Notionへの更新処理をスキップしてビルド時間を短縮します。
+- なお、この `.update_notion.cache` ファイルは `.gitignore` に登録されているため、Gitリポジトリには含まれません。
 
 ### 4. エラーハンドリング
 
-- Notion API のエラーを適切にキャッチ
-- 一部のライブラリで失敗しても他の処理は継続
-- 詳細なログ出力
+- Notion APIとの通信エラーや、ファイルの解析エラーを検知し、ログに出力します。
+- スクリプトが失敗した場合は、キャッシュが更新されないため、次回のビルドで再実行されます。
 
 ## トラブルシューティング
 
 ### よくある問題
 
-1. **Notion API エラー**
-   - トークンが正しく設定されているか確認
-   - データベース ID が正しいか確認
-   - Integration がデータベースにアクセス権限を持っているか確認
+1. **Notion API エラー**:
+   - `NOTION_TOKEN` と `NOTION_DATABASE_ID` が `secrets.sh` に正しく設定されているか確認してください。
+   - Notionインテグレーションが対象のデータベースに対して適切な権限（読み取り、書き込み）を持っているか確認してください。
 
-2. **Ruby エラー**
-   - macOS の標準 Ruby を使用（/usr/bin/ruby）
-   - Package.resolved の JSON 形式が正しいか確認
+2. **Ruby エラー**:
+   - スクリプトはmacOS標準のRuby (`/usr/bin/ruby`) を使用します。
+   - `Package.resolved` ファイルのJSON形式が破損していないか確認してください。
 
-3. **権限エラー**
-   - スクリプトファイルに実行権限があるか確認：`chmod +x Scripts/update_notion.sh`
+3. **権限エラー**:
+   - スクリプトに実行権限が付与されているか確認してください (`chmod +x Scripts/update_notion.sh`)。
 
 ### ログの確認
 
-スクリプトは以下のような出力を行います：
+Xcodeのビルドログや、手動実行時のターミナル出力で、以下のようなログを確認できます。
 
 ```
 📦 Processing all libraries...
@@ -133,11 +133,3 @@ source "${SRCROOT}/Scripts/secrets.sh"
 ✅ Updated: SwiftProtobuf@1.29.0 (SwiftPM)
 INFO: Successfully updated all libraries to Notion.
 ```
-
-## ライセンス
-
-このスクリプトは MIT ライセンスの下で提供されています。
-
-## 貢献
-
-バグ報告や機能追加の提案は、プロジェクトの Issue で受け付けています。
