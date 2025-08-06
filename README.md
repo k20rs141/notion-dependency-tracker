@@ -27,6 +27,8 @@ export NOTION_DATABASE_ID="your_database_id"
 
 または、`Scripts/secrets.sh` ファイルに記述して source で読み込むことも可能です：
 
+※`Scripts/secrets.sh` ファイルを.gitignoreに追加することを忘れずに！
+
 ```bash
 # Scripts/secrets.sh
 export NOTION_TOKEN="your_notion_integration_token"
