@@ -79,14 +79,14 @@ if [[ -z "$LIBRARY_TYPES" ]]; then
   exit 0
 fi
 
-echo "📦 Library Types: ${LIBRARY_TYPES}"
+echo "📦 Package Manager Types: ${LIBRARY_TYPES}"
 
 # ── 現在時刻 ──
 now_iso=$(date -u +%FT%TZ)
 now_jst=$(TZ='Asia/Tokyo' date '+%Y-%m-%d %H:%M:%S')
 echo "🕐 Update Time: ${now_jst} (JST)"
 
-# ── Notion API関数（前回と同じ） ──
+# ── Notion API関数 ──
 search_existing_project() {
   local project_name="$1"
   
@@ -131,13 +131,14 @@ create_or_update_project() {
     end
   ")
   
+  # プロパティの構築
   local properties=$(cat <<JSON
 {
   "プロジェクト名": { 
     "title": [{ "text": { "content": "${project_name}" } }] 
   },
-  "ライブラリ": { 
-    "rich_text": [{ "text": { "content": "${library_types}" } }] 
+  "パッケージマネージャー": { 
+    "select": { "name": "${library_types}" } 
   },
   "更新日": { 
     "date": { "start": "${update_time_iso}" } 
@@ -201,7 +202,7 @@ if create_or_update_project "$PROJECT_NAME" "$LIBRARY_TYPES" "$now_iso"; then
   if [[ -n "${GITHUB_ACTIONS}" ]]; then
     echo "update-status=success" >> $GITHUB_OUTPUT
     echo "project-name=$PROJECT_NAME" >> $GITHUB_OUTPUT
-    echo "library-types=$LIBRARY_TYPES" >> $GITHUB_OUTPUT
+    echo "package-manager-types=$LIBRARY_TYPES" >> $GITHUB_OUTPUT
   fi
 else
   echo "💥 Failed to update Notion database"
