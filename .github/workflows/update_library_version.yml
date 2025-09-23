@@ -1,34 +1,15 @@
-name: Update Notion Dependencies Database
+name: Test Simple Workflow
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-      - develop
-    paths:
-      - 'Podfile.lock'
-      - '**/Package.resolved'
-  
-  workflow_dispatch:
 
 jobs:
-  update-notion:
-    runs-on: macos-15
-    timeout-minutes: 5
+  test:
+    runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 2  # git diffで変更ファイル検出用
-
-    - name: Update Notion database
-      env:
-        NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-        PROJECT_NAME: ${{ github.repository }}
-        GITHUB_REF_NAME: ${{ github.ref_name }}
-        GITHUB_EVENT_NAME: ${{ github.event_name }}
-      run: |
-        chmod +x Scripts/update_notion.sh
-        ./Scripts/update_notion.sh
+    - name: Test step
+      run: echo "Hello World"
