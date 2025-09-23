@@ -7,7 +7,7 @@ on:
       - develop
     paths:
       - 'Podfile.lock'
-      - '**.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+      - '**/Package.resolved'
   
   workflow_dispatch:
 
@@ -20,37 +20,15 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        fetch-depth: 2  # 変更ファイル検知用
+        fetch-depth: 2  # git diffで変更ファイル検出用
 
-    - name: Detect changed dependency files
-      id: detect-changes
-      run: |
-        # 変更されたファイルを特定
-        CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
-        
-        LIBRARY_TYPES=""
-        if echo "$CHANGED_FILES" | grep -q "Podfile.lock"; then
-          LIBRARY_TYPES="${LIBRARY_TYPES}CocoaPods,"
-        fi
-        if echo "$CHANGED_FILES" | grep -q "Package.resolved"; then
-          LIBRARY_TYPES="${LIBRARY_TYPES}SPM,"
-        fi
-        
-        # 末尾のカンマを除去
-        LIBRARY_TYPES=${LIBRARY_TYPES%,}
-        
-        echo "library-types=$LIBRARY_TYPES" >> $GITHUB_OUTPUT
-        echo "📦 Detected changes in: $LIBRARY_TYPES"
-    
     - name: Update Notion database
       env:
         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         PROJECT_NAME: ${{ github.repository }}
-        LIBRARY_TYPES: ${{ steps.detect-changes.outputs.library-types }}
         GITHUB_REF_NAME: ${{ github.ref_name }}
-        GITHUB_SHA: ${{ github.sha }}
-        GITHUB_RUN_ID: ${{ github.run_id }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
       run: |
         chmod +x Scripts/update_notion.sh
         ./Scripts/update_notion.sh
