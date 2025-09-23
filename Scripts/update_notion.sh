@@ -8,65 +8,71 @@ set -eo pipefail
 
 echo "🔧 Project: ${PROJECT_NAME}"
 echo "🌿 Branch: ${GITHUB_REF_NAME:-unknown}"
+echo "🚀 Event: ${GITHUB_EVENT_NAME:-unknown}"
 
-# ── 依存関係ファイルの実際の場所を検出 ──
-detect_dependency_changes() {
+# ── 依存関係の変更検出 ──
+detect_library_changes() {
   local library_types=""
   
-  # GitHubActionsの場合は変更されたファイルから検出
-  if [[ -n "${GITHUB_ACTIONS}" ]]; then
-    echo "🔍 Detecting dependency changes from Git diff..."
+  if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+    # 手動実行の場合は現在の依存関係ファイルをチェック
+    echo "🔍 Manual execution - checking current dependency files..."
+    
+    if [[ -f "Podfile.lock" ]]; then
+      library_types="${library_types}CocoaPods,"
+      echo "📦 Found: Podfile.lock"
+    fi
+    
+    if find . -name "Package.resolved" -type f | head -1 | read -r; then
+      library_types="${library_types}SPM,"
+      echo "📦 Found: Package.resolved files"
+    fi
+    
+    if [[ -z "$library_types" ]]; then
+      echo "⚠️ No dependency files found"
+      exit 0
+    fi
+  else
+    # pushイベントの場合は変更されたファイルをチェック
+    echo "🔍 Push event - detecting changed dependency files..."
     
     CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+    
+    if [[ -z "$CHANGED_FILES" ]]; then
+      echo "⚠️ No changed files detected"
+      exit 0
+    fi
     
     echo "Changed files:"
     echo "$CHANGED_FILES" | while read -r file; do
       [[ -n "$file" ]] && echo "  - $file"
     done
     
-    if echo "$CHANGED_FILES" | grep -q "Podfile.lock"; then
+    # CocoaPodsチェック
+    if echo "$CHANGED_FILES" | grep -q "^Podfile\.lock$"; then
       library_types="${library_types}CocoaPods,"
-      echo "📦 Found CocoaPods changes (Podfile.lock)"
+      echo "✅ CocoaPods dependency changed"
     fi
     
-    if echo "$CHANGED_FILES" | grep -q "Package.resolved"; then
+    # SPMチェック
+    if echo "$CHANGED_FILES" | grep -q "Package\.resolved$"; then
       library_types="${library_types}SPM,"
-      echo "📦 Found SPM changes (Package.resolved)"
-    fi
-  else
-    # ローカル実行時は実際にファイルの存在を確認
-    echo "🔍 Checking for dependency files..."
-    
-    if [[ -f "Podfile.lock" ]]; then
-      library_types="${library_types}CocoaPods,"
-      echo "📦 Found Podfile.lock"
+      echo "✅ SPM dependency changed"
     fi
     
-    # Package.resolvedファイルを検索
-    if find . -name "Package.resolved" -type f 2>/dev/null | head -1 | read -r; then
-      library_types="${library_types}SPM,"
-      echo "📦 Found Package.resolved files:"
-      find . -name "Package.resolved" -type f 2>/dev/null | while read -r file; do
-        echo "  - $file"
-      done
+    if [[ -z "$library_types" ]]; then
+      echo "ℹ️ No dependency changes detected (unexpected - paths filter should have prevented this)"
+      exit 0
     fi
   fi
   
   # 末尾のカンマを除去
   library_types=${library_types%,}
-  
-  if [[ -z "$library_types" ]]; then
-    echo "ℹ️ No dependency changes detected"
-    exit 0
-  fi
-  
   echo "$library_types"
 }
 
-# ── メイン処理 ──
-echo "🚀 Starting dependency detection..."
-
-LIBRARY_TYPES=$(detect_dependency_changes)
+# ── 変更検出実行 ──
+LIBRARY_TYPES=$(detect_library_changes)
 
 if [[ -z "$LIBRARY_TYPES" ]]; then
   echo "🏁 No dependency updates needed"
@@ -155,10 +161,10 @@ JSON
       -H "Notion-Version: 2022-06-28" \
       -H "Content-Type: application/json" \
       -d "${update_payload}" > /dev/null; then
-      echo "✅ Updated project: ${project_name} (${library_types})"
+      echo "✅ Updated: ${project_name} (${library_types})"
       return 0
     else
-      echo "❌ Failed to update project: ${project_name}"
+      echo "❌ Failed to update: ${project_name}"
       return 1
     fi
   else
@@ -177,16 +183,18 @@ JSON
       -H "Notion-Version: 2022-06-28" \
       -H "Content-Type: application/json" \
       -d "${create_payload}" > /dev/null; then
-      echo "✅ Created project: ${project_name} (${library_types})"
+      echo "✅ Created: ${project_name} (${library_types})"
       return 0
     else
-      echo "❌ Failed to create project: ${project_name}"
+      echo "❌ Failed to create: ${project_name}"
       return 1
     fi
   fi
 }
 
 # ── Notion更新実行 ──
+echo "🚀 Updating Notion database..."
+
 if create_or_update_project "$PROJECT_NAME" "$LIBRARY_TYPES" "$now_iso"; then
   echo "🎉 Successfully updated Notion database!"
   
