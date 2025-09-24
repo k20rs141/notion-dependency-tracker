@@ -22,15 +22,25 @@ jobs:
       with:
         fetch-depth: 2
 
-    - name: Check env presence
-      env:
-        NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-        PROJECT_NAME: ${{ github.repository }}
+    - name: Debug script content
       run: |
-        if [ -n "${NOTION_TOKEN}" ]; then echo "NOTION_TOKEN: set"; else echo "NOTION_TOKEN: missing"; fi
-        if [ -n "${NOTION_DATABASE_ID}" ]; then echo "NOTION_DATABASE_ID: set"; else echo "NOTION_DATABASE_ID: missing"; fi
-        if [ -n "${PROJECT_NAME}" ]; then echo "PROJECT_NAME: set"; else echo "PROJECT_NAME: missing"; fi
+        echo "=== Script file info ==="
+        ls -la Scripts/
+        echo ""
+        echo "=== Script line count ==="
+        wc -l Scripts/update_notion.sh
+        echo ""
+        echo "=== Check for old patterns ==="
+        grep -n "Processing.*(" Scripts/update_notion.sh && echo "❌ Old version detected!" || echo "✅ New version confirmed"
+        echo ""
+        echo "=== Check for multi_select ==="
+        grep -n "multi_select" Scripts/update_notion.sh && echo "✅ Multi-select found" || echo "❌ Multi-select missing!"
+        echo ""
+        echo "=== Check for individual loop ==="
+        grep -n "for manager in.*MANAGERS" Scripts/update_notion.sh && echo "❌ Individual loop found!" || echo "✅ No individual loop"
+        echo ""
+        echo "=== First 20 lines of script ==="
+        head -20 Scripts/update_notion.sh
 
     - name: Update Notion database
       env:
