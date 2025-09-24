@@ -1,1 +1,20 @@
+PODS:
+  - Alamofire (5.10.2)
+  - SDWebImage (5.19.0)
 
+DEPENDENCIES:
+  - Alamofire
+  - SDWebImage
+
+SPEC REPOS:
+  trunk:
+    - Alamofire
+    - SDWebImage
+
+SPEC CHECKSUMS:
+  Alamofire: 123abc456def
+  SDWebImage: 789ghi012jkl
+
+PODFILE CHECKSUM: xyz789abc123
+
+COCOAPODS: 1.12.0
