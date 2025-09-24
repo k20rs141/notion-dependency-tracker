@@ -1,11 +1,3 @@
-# GitHubでファイル内容を直接確認
-echo "Current GitHub file: https://github.com/$(git config --get remote.origin.url | sed 's/.*github.com[:/]\([^/]*\/[^/]*\).*/\1/' | sed 's/\.git$//')/blob/main/Scripts/update_notion.sh"
-
-# 完全に削除して新規作成
-rm -f Scripts/update_notion.sh
-
-# 最新版を確実に作成
-cat > Scripts/update_notion.sh << 'SCRIPT_END'
 #!/usr/bin/env bash
 set -eo pipefail
 
@@ -131,18 +123,3 @@ else
 fi
 
 echo "🎉 Successfully updated Notion database!"
-SCRIPT_END
-
-# 実行権限付与
-chmod +x Scripts/update_notion.sh
-
-# 確認
-echo "=== Script verification ==="
-echo "Lines: $(wc -l < Scripts/update_notion.sh)"
-grep -q "Processing.*(" Scripts/update_notion.sh && echo "❌ Still has old pattern!" || echo "✅ No old pattern found"
-grep -q "multi_select" Scripts/update_notion.sh && echo "✅ Has multi_select" || echo "❌ Missing multi_select"
-
-# コミット
-git add Scripts/update_notion.sh
-git commit -m "Force update to multi_select version (simplified)"
-git push
