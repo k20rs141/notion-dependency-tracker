@@ -1,3 +1,8 @@
+# 既存ファイルを完全削除
+rm -f Scripts/update_notion.sh
+
+# 新しいファイルを作成
+cat > Scripts/update_notion.sh << 'EOF'
 #!/usr/bin/env bash
 set -eo pipefail
 
@@ -150,3 +155,13 @@ else
   
   exit 1
 fi
+EOF
+
+# 実行権限を付与
+chmod +x Scripts/update_notion.sh
+
+# 行数確認（約100行程度になるはず）
+wc -l Scripts/update_notion.sh
+
+# ファイル内容確認（readarrayが含まれていないことを確認）
+grep -n "readarray" Scripts/update_notion.sh || echo "readarray not found (good!)"
