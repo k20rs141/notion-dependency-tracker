@@ -10,129 +10,113 @@ echo "🔧 Project: ${PROJECT_NAME}"
 echo "🌿 Branch: ${GITHUB_REF_NAME:-unknown}"
 echo "🚀 Event: ${GITHUB_EVENT_NAME:-unknown}"
 
-# ── 依存関係の変更検出（修正版） ──
-detect_library_changes() {
-  local library_types=""
-  
-  if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-    # ログメッセージを標準エラーに出力（戻り値に混入させない）
-    echo "🔍 Manual execution - checking current dependency files..." >&2
-    
-    if [[ -f "Podfile.lock" ]]; then
-      library_types="${library_types}CocoaPods,"
-      echo "📦 Found: Podfile.lock" >&2
-    fi
-    
-    if find . -name "Package.resolved" -type f | head -1 | read -r; then
-      library_types="${library_types}SPM,"
-      echo "📦 Found: Package.resolved files" >&2
-    fi
-    
-    if [[ -z "$library_types" ]]; then
-      echo "⚠️ No dependency files found" >&2
-      exit 0
-    fi
-  else
-    echo "🔍 Push event - detecting changed dependency files..." >&2
-    
-    CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
-    
-    if [[ -z "$CHANGED_FILES" ]]; then
-      echo "⚠️ No changed files detected" >&2
-      exit 0
-    fi
-    
-    echo "Changed files:" >&2
-    echo "$CHANGED_FILES" | while read -r file; do
-      [[ -n "$file" ]] && echo "  - $file" >&2
-    done
-    
-    if echo "$CHANGED_FILES" | grep -q "^Podfile\.lock$"; then
-      library_types="${library_types}CocoaPods,"
-      echo "✅ CocoaPods dependency changed" >&2
-    fi
-    
-    if echo "$CHANGED_FILES" | grep -q "Package\.resolved$"; then
-      library_types="${library_types}SPM,"
-      echo "✅ SPM dependency changed" >&2
-    fi
-    
-    if [[ -z "$library_types" ]]; then
-      echo "ℹ️ No dependency changes detected" >&2
-      exit 0
-    fi
-  fi
-  
-  # 末尾のカンマを除去して標準出力に出力（戻り値として使用）
-  library_types=${library_types%,}
-  echo "$library_types"
-}
-
-LIBRARY_TYPES=$(detect_library_changes)
-
-if [[ -z "$LIBRARY_TYPES" ]]; then
-  echo "🏁 No dependency updates needed"
-  exit 0
-fi
-
-echo "📦 Package Manager Types: ${LIBRARY_TYPES}"
-
+# ── 現在時刻 ──
 now_iso=$(date -u +%FT%TZ)
 now_jst=$(TZ='Asia/Tokyo' date '+%Y-%m-%d %H:%M:%S')
 echo "🕐 Update Time: ${now_jst} (JST)"
 
-# ── Notion API関数（修正版） ──
+# ── 依存関係の変更検出（個別処理版） ──
+detect_dependency_changes() {
+  local -a managers=()  # 配列として宣言
+  
+  if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+    echo "🔍 Manual execution - checking current dependency files..."
+    
+    if [[ -f "Podfile.lock" ]]; then
+      managers+=("CocoaPods")
+      echo "📦 Found: Podfile.lock"
+    fi
+    
+    if find . -name "Package.resolved" -type f | head -1 | read -r; then
+      managers+=("SPM")
+      echo "📦 Found: Package.resolved files"
+    fi
+    
+    if [[ ${#managers[@]} -eq 0 ]]; then
+      echo "⚠️ No dependency files found"
+      exit 0
+    fi
+  else
+    echo "🔍 Push event - detecting changed dependency files..."
+    
+    CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+    
+    if [[ -z "$CHANGED_FILES" ]]; then
+      echo "⚠️ No changed files detected"
+      exit 0
+    fi
+    
+    echo "Changed files:"
+    echo "$CHANGED_FILES" | while read -r file; do
+      [[ -n "$file" ]] && echo "  - $file"
+    done
+    
+    if echo "$CHANGED_FILES" | grep -q "^Podfile\.lock$"; then
+      managers+=("CocoaPods")
+      echo "✅ CocoaPods dependency changed"
+    fi
+    
+    if echo "$CHANGED_FILES" | grep -q "Package\.resolved$"; then
+      managers+=("SPM")
+      echo "✅ SPM dependency changed"
+    fi
+    
+    if [[ ${#managers[@]} -eq 0 ]]; then
+      echo "ℹ️ No dependency changes detected"
+      exit 0
+    fi
+  fi
+  
+  # 配列を改行区切りで返す
+  printf '%s\n' "${managers[@]}"
+}
+
+# ── Notion API関数 ──
 search_existing_project() {
   local project_name="$1"
+  local package_manager="$2"
   
-  echo "🔍 Searching for existing project: ${project_name}"
+  echo "🔍 Searching for existing project: ${project_name} (${package_manager})"
   
   local filter_payload=$(cat <<JSON
 {
   "filter": {
-    "property": "プロジェクト名",
-    "title": {
-      "equals": "${project_name}"
-    }
+    "and": [
+      {
+        "property": "プロジェクト名",
+        "title": {
+          "equals": "${project_name}"
+        }
+      },
+      {
+        "property": "パッケージマネージャー",
+        "select": {
+          "equals": "${package_manager}"
+        }
+      }
+    ]
   }
 }
 JSON
   )
   
-  echo "🔍 Search payload:"
-  echo "$filter_payload"
-  
-  local response
-  response=$(curl -s -X POST "https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query" \
+  curl -s -X POST "https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query" \
     -H "Authorization: Bearer ${NOTION_TOKEN}" \
     -H "Notion-Version: 2022-06-28" \
     -H "Content-Type: application/json" \
-    -d "${filter_payload}")
-  
-  echo "🔍 Search response:"
-  echo "$response"
-  
-  # レスポンスを戻り値として返す（二重出力を回避）
-  echo "$response"
+    -d "${filter_payload}"
 }
 
 create_or_update_project() {
   local project_name="$1"
-  local library_types="$2"
+  local package_manager="$2"
   local update_time_iso="$3"
   
   local search_result
-  search_result=$(search_existing_project "$project_name")
-  
-  # レスポンスから最後の行（実際のJSONレスポンス）を取得
-  local json_response
-  json_response=$(echo "$search_result" | tail -n 1)
-  
-  echo "🔍 JSON response for processing:"
-  echo "$json_response"
+  search_result=$(search_existing_project "$project_name" "$package_manager")
   
   local existing_page_id
-  existing_page_id=$(echo "$json_response" | ruby -rjson -e "
+  existing_page_id=$(echo "$search_result" | ruby -rjson -e "
     begin
       data = JSON.parse(STDIN.read)
       if data['results'] && data['results'].length > 0
@@ -143,7 +127,7 @@ create_or_update_project() {
     end
   ")
   
-  echo "🔍 Existing page ID: '${existing_page_id}'"
+  echo "🔍 Existing page ID for ${package_manager}: '${existing_page_id}'"
   
   local properties=$(cat <<JSON
 {
@@ -151,7 +135,7 @@ create_or_update_project() {
     "title": [{ "text": { "content": "${project_name}" } }] 
   },
   "パッケージマネージャー": { 
-    "select": { "name": "${library_types}" } 
+    "select": { "name": "${package_manager}" } 
   },
   "更新日": { 
     "date": { "start": "${update_time_iso}" } 
@@ -160,11 +144,8 @@ create_or_update_project() {
 JSON
   )
   
-  echo "📝 Properties to be used:"
-  echo "$properties"
-  
   if [[ -n "$existing_page_id" ]]; then
-    echo "📝 Updating existing project..."
+    echo "📝 Updating existing project: ${project_name} (${package_manager})"
     
     local update_payload=$(cat <<JSON
 {
@@ -173,9 +154,6 @@ JSON
 JSON
     )
     
-    echo "📝 Update payload:"
-    echo "$update_payload"
-    
     local update_response
     update_response=$(curl -s -X PATCH "https://api.notion.com/v1/pages/${existing_page_id}" \
       -H "Authorization: Bearer ${NOTION_TOKEN}" \
@@ -183,18 +161,16 @@ JSON
       -H "Content-Type: application/json" \
       -d "${update_payload}")
     
-    echo "📝 Update response:"
-    echo "$update_response"
-    
     if echo "$update_response" | grep -q '"object":"page"'; then
-      echo "✅ Updated: ${project_name} (${library_types})"
+      echo "✅ Updated: ${project_name} (${package_manager})"
       return 0
     else
-      echo "❌ Failed to update: ${project_name}"
+      echo "❌ Failed to update: ${project_name} (${package_manager})"
+      echo "Response: $update_response"
       return 1
     fi
   else
-    echo "📝 Creating new project..."
+    echo "📝 Creating new project: ${project_name} (${package_manager})"
     
     local create_payload=$(cat <<JSON
 {
@@ -204,9 +180,6 @@ JSON
 JSON
     )
     
-    echo "📝 Create payload:"
-    echo "$create_payload"
-    
     local create_response
     create_response=$(curl -s -X POST https://api.notion.com/v1/pages \
       -H "Authorization: Bearer ${NOTION_TOKEN}" \
@@ -214,32 +187,58 @@ JSON
       -H "Content-Type: application/json" \
       -d "${create_payload}")
     
-    echo "📝 Create response:"
-    echo "$create_response"
-    
     if echo "$create_response" | grep -q '"object":"page"'; then
-      echo "✅ Created: ${project_name} (${library_types})"
+      echo "✅ Created: ${project_name} (${package_manager})"
       return 0
     else
-      echo "❌ Failed to create: ${project_name}"
+      echo "❌ Failed to create: ${project_name} (${package_manager})"
+      echo "Response: $create_response"
       return 1
     fi
   fi
 }
 
-# ── Notion更新実行 ──
+# ── 依存関係管理ツールを個別に処理 ──
+echo "🚀 Detecting dependency changes..."
+
+# 変更された依存関係管理ツールを取得
+readarray -t DEPENDENCY_MANAGERS < <(detect_dependency_changes)
+
+if [[ ${#DEPENDENCY_MANAGERS[@]} -eq 0 ]]; then
+  echo "🏁 No dependency updates needed"
+  exit 0
+fi
+
+echo "📦 Found ${#DEPENDENCY_MANAGERS[@]} dependency manager(s): ${DEPENDENCY_MANAGERS[*]}"
+
+# ── 各パッケージマネージャーを個別にNotionに登録 ──
 echo "🚀 Updating Notion database..."
 
-if create_or_update_project "$PROJECT_NAME" "$LIBRARY_TYPES" "$now_iso"; then
-  echo "🎉 Successfully updated Notion database!"
+all_success=true
+for manager in "${DEPENDENCY_MANAGERS[@]}"; do
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Processing: ${manager}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  
+  if ! create_or_update_project "$PROJECT_NAME" "$manager" "$now_iso"; then
+    all_success=false
+  fi
+  
+  echo ""  # 空行で区切り
+done
+
+# ── 結果処理 ──
+if $all_success; then
+  echo "🎉 Successfully updated all ${#DEPENDENCY_MANAGERS[@]} dependency manager(s) in Notion!"
   
   if [[ -n "${GITHUB_ACTIONS}" ]]; then
     echo "update-status=success" >> $GITHUB_OUTPUT
     echo "project-name=$PROJECT_NAME" >> $GITHUB_OUTPUT
-    echo "package-manager-types=$LIBRARY_TYPES" >> $GITHUB_OUTPUT
+    echo "managers-count=${#DEPENDENCY_MANAGERS[@]}" >> $GITHUB_OUTPUT
+    echo "managers=${DEPENDENCY_MANAGERS[*]}" >> $GITHUB_OUTPUT
   fi
 else
-  echo "💥 Failed to update Notion database"
+  echo "💥 Some dependency managers failed to update"
   
   if [[ -n "${GITHUB_ACTIONS}" ]]; then
     echo "update-status=failed" >> $GITHUB_OUTPUT
