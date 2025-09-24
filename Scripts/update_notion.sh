@@ -9,13 +9,14 @@ set -eo pipefail
 echo "🔧 Project: ${PROJECT_NAME}"
 echo "🌿 Branch: ${GITHUB_REF_NAME:-unknown}"
 echo "🚀 Event: ${GITHUB_EVENT_NAME:-unknown}"
+echo "🔑 NOTION_DATABASE_ID: ${NOTION_DATABASE_ID}"
+echo "🔑 NOTION_TOKEN length: ${#NOTION_TOKEN}"
 
 # ── 依存関係の変更検出 ──
 detect_library_changes() {
   local library_types=""
   
   if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-    # 手動実行の場合は現在の依存関係ファイルをチェック
     echo "🔍 Manual execution - checking current dependency files..."
     
     if [[ -f "Podfile.lock" ]]; then
@@ -33,7 +34,6 @@ detect_library_changes() {
       exit 0
     fi
   else
-    # pushイベントの場合は変更されたファイルをチェック
     echo "🔍 Push event - detecting changed dependency files..."
     
     CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
@@ -48,30 +48,26 @@ detect_library_changes() {
       [[ -n "$file" ]] && echo "  - $file"
     done
     
-    # CocoaPodsチェック
     if echo "$CHANGED_FILES" | grep -q "^Podfile\.lock$"; then
       library_types="${library_types}CocoaPods,"
       echo "✅ CocoaPods dependency changed"
     fi
     
-    # SPMチェック
     if echo "$CHANGED_FILES" | grep -q "Package\.resolved$"; then
       library_types="${library_types}SPM,"
       echo "✅ SPM dependency changed"
     fi
     
     if [[ -z "$library_types" ]]; then
-      echo "ℹ️ No dependency changes detected (unexpected - paths filter should have prevented this)"
+      echo "ℹ️ No dependency changes detected"
       exit 0
     fi
   fi
   
-  # 末尾のカンマを除去
   library_types=${library_types%,}
   echo "$library_types"
 }
 
-# ── 変更検出実行 ──
 LIBRARY_TYPES=$(detect_library_changes)
 
 if [[ -z "$LIBRARY_TYPES" ]]; then
@@ -81,14 +77,15 @@ fi
 
 echo "📦 Package Manager Types: ${LIBRARY_TYPES}"
 
-# ── 現在時刻 ──
 now_iso=$(date -u +%FT%TZ)
 now_jst=$(TZ='Asia/Tokyo' date '+%Y-%m-%d %H:%M:%S')
 echo "🕐 Update Time: ${now_jst} (JST)"
 
-# ── Notion API関数 ──
+# ── Notion API関数（デバッグ版） ──
 search_existing_project() {
   local project_name="$1"
+  
+  echo "🔍 Searching with project name: '${project_name}'"
   
   local filter_payload=$(cat <<JSON
 {
@@ -102,11 +99,19 @@ search_existing_project() {
 JSON
   )
   
-  curl -s -X POST "https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query" \
+  echo "🔍 Search payload:"
+  echo "$filter_payload"
+  
+  local response
+  response=$(curl -s -X POST "https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query" \
     -H "Authorization: Bearer ${NOTION_TOKEN}" \
     -H "Notion-Version: 2022-06-28" \
     -H "Content-Type: application/json" \
-    -d "${filter_payload}"
+    -d "${filter_payload}")
+  
+  echo "🔍 Search response:"
+  echo "$response"
+  echo "$response"
 }
 
 create_or_update_project() {
@@ -127,11 +132,12 @@ create_or_update_project() {
         puts data['results'][0]['id']
       end
     rescue => e
-      # 新規作成として処理
+      puts \"Ruby error: #{e.message}\"
     end
   ")
   
-  # プロパティの構築
+  echo "🔍 Existing page ID: '${existing_page_id}'"
+  
   local properties=$(cat <<JSON
 {
   "プロジェクト名": { 
@@ -140,12 +146,15 @@ create_or_update_project() {
   "パッケージマネージャー": { 
     "select": { "name": "${library_types}" } 
   },
-  "更新日": { 
+  "更新日時": { 
     "date": { "start": "${update_time_iso}" } 
   }
 }
 JSON
   )
+  
+  echo "📝 Properties to be used:"
+  echo "$properties"
   
   if [[ -n "$existing_page_id" ]]; then
     echo "📝 Updating existing project..."
@@ -157,15 +166,25 @@ JSON
 JSON
     )
     
-    if curl -f -s -X PATCH "https://api.notion.com/v1/pages/${existing_page_id}" \
+    echo "📝 Update payload:"
+    echo "$update_payload"
+    
+    local update_response
+    update_response=$(curl -s -X PATCH "https://api.notion.com/v1/pages/${existing_page_id}" \
       -H "Authorization: Bearer ${NOTION_TOKEN}" \
       -H "Notion-Version: 2022-06-28" \
       -H "Content-Type: application/json" \
-      -d "${update_payload}" > /dev/null; then
+      -d "${update_payload}")
+    
+    echo "📝 Update response:"
+    echo "$update_response"
+    
+    if echo "$update_response" | grep -q '"object":"page"'; then
       echo "✅ Updated: ${project_name} (${library_types})"
       return 0
     else
       echo "❌ Failed to update: ${project_name}"
+      echo "Response: $update_response"
       return 1
     fi
   else
@@ -179,15 +198,25 @@ JSON
 JSON
     )
     
-    if curl -f -s -X POST https://api.notion.com/v1/pages \
+    echo "📝 Create payload:"
+    echo "$create_payload"
+    
+    local create_response
+    create_response=$(curl -s -X POST https://api.notion.com/v1/pages \
       -H "Authorization: Bearer ${NOTION_TOKEN}" \
       -H "Notion-Version: 2022-06-28" \
       -H "Content-Type: application/json" \
-      -d "${create_payload}" > /dev/null; then
+      -d "${create_payload}")
+    
+    echo "📝 Create response:"
+    echo "$create_response"
+    
+    if echo "$create_response" | grep -q '"object":"page"'; then
       echo "✅ Created: ${project_name} (${library_types})"
       return 0
     else
       echo "❌ Failed to create: ${project_name}"
+      echo "Response: $create_response"
       return 1
     fi
   fi
