@@ -65,18 +65,43 @@ if [[ -z "$MANAGERS" ]]; then
   exit 0
 fi
 
-echo "📦 Managers to process:$MANAGERS"
+echo "📦 Managers detected:$MANAGERS"
 
-# ── Notion更新関数 ──
+# ── Multi_select用のJSON配列生成 ──
+generate_multi_select_json() {
+  local managers_string="$1"
+  local json_array="["
+  local first=true
+  
+  for manager in $managers_string; do
+    [[ -z "$manager" ]] && continue
+    
+    if [[ "$first" == true ]]; then
+      first=false
+    else
+      json_array+=","
+    fi
+    
+    json_array+="{\"name\":\"$manager\"}"
+  done
+  
+  json_array+="]"
+  echo "$json_array"
+}
+
+# ── Notion更新関数（Multi_select対応版） ──
 update_notion() {
   local project_name="$1"
-  local package_manager="$2"
+  local managers_string="$2"
   local update_time="$3"
   
-  echo "🔄 Processing: $project_name ($package_manager)"
+  echo "🔄 Processing: $project_name"
+  echo "📦 Managers: [$managers_string]"
   
-  # 既存レコード検索
-  search_filter="{\"filter\":{\"and\":[{\"property\":\"プロジェクト名\",\"title\":{\"equals\":\"$project_name\"}},{\"property\":\"パッケージマネージャー\",\"select\":{\"equals\":\"$package_manager\"}}]}}"
+  # 既存レコード検索（プロジェクト名のみで検索）
+  search_filter="{\"filter\":{\"property\":\"プロジェクト名\",\"title\":{\"equals\":\"$project_name\"}}}"
+  
+  echo "🔍 Searching for existing project..."
   
   search_response=$(curl -s -X POST "https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query" \
     -H "Authorization: Bearer ${NOTION_TOKEN}" \
@@ -86,8 +111,17 @@ update_notion() {
   
   page_id=$(echo "$search_response" | ruby -rjson -e "data=JSON.parse(STDIN.read); puts data['results'][0]['id'] if data['results'][0]" 2>/dev/null)
   
-  # プロパティ作成
-  properties="{\"プロジェクト名\":{\"title\":[{\"text\":{\"content\":\"$project_name\"}}]},\"パッケージマネージャー\":{\"select\":{\"name\":\"$package_manager\"}},\"更新日\":{\"date\":{\"start\":\"$update_time\"}}}"
+  echo "🔍 Found existing page ID: '$page_id'"
+  
+  # Multi_select用のJSON配列を生成
+  multi_select_array=$(generate_multi_select_json "$managers_string")
+  echo "📋 Multi-select array: $multi_select_array"
+  
+  # プロパティ作成（Multi_select対応）
+  properties="{\"プロジェクト名\":{\"title\":[{\"text\":{\"content\":\"$project_name\"}}]},\"パッケージマネージャー\":{\"multi_select\":$multi_select_array},\"更新日\":{\"date\":{\"start\":\"$update_time\"}}}"
+  
+  echo "📝 Properties JSON:"
+  echo "$properties"
   
   if [[ -n "$page_id" ]]; then
     echo "📝 Updating existing record..."
@@ -99,15 +133,21 @@ update_notion() {
       -H "Content-Type: application/json" \
       -d "$update_payload")
     
+    echo "📝 Update response:"
+    echo "$response"
+    
     if echo "$response" | grep -q '"object":"page"'; then
-      echo "✅ Updated: $project_name ($package_manager)"
+      echo "✅ Updated: $project_name [$managers_string]"
     else
-      echo "❌ Update failed: $response"
+      echo "❌ Update failed"
       return 1
     fi
   else
     echo "📝 Creating new record..."
     create_payload="{\"parent\":{\"database_id\":\"$NOTION_DATABASE_ID\"},\"properties\":$properties}"
+    
+    echo "📝 Create payload:"
+    echo "$create_payload"
     
     response=$(curl -s -X POST "https://api.notion.com/v1/pages" \
       -H "Authorization: Bearer ${NOTION_TOKEN}" \
@@ -115,10 +155,13 @@ update_notion() {
       -H "Content-Type: application/json" \
       -d "$create_payload")
     
+    echo "📝 Create response:"
+    echo "$response"
+    
     if echo "$response" | grep -q '"object":"page"'; then
-      echo "✅ Created: $project_name ($package_manager)"
+      echo "✅ Created: $project_name [$managers_string]"
     else
-      echo "❌ Create failed: $response"
+      echo "❌ Create failed"
       return 1
     fi
   fi
@@ -126,36 +169,19 @@ update_notion() {
   return 0
 }
 
-# ── 各マネージャーを処理 ──
+# ── プロジェクトを更新（1つのレコードで複数マネージャー対応） ──
 echo "🚀 Updating Notion database..."
-success_count=0
-total_count=0
 
-for manager in $MANAGERS; do
-  [[ -z "$manager" ]] && continue
-  
-  total_count=$((total_count + 1))
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  
-  if update_notion "$PROJECT_NAME" "$manager" "$now_iso"; then
-    success_count=$((success_count + 1))
-  fi
-  
-  echo ""
-done
-
-# ── 結果 ──
-echo "📊 Results: $success_count/$total_count successful"
-
-if [[ $success_count -eq $total_count ]]; then
-  echo "🎉 All updates successful!"
+if update_notion "$PROJECT_NAME" "$MANAGERS" "$now_iso"; then
+  echo "🎉 Successfully updated Notion database!"
   
   if [[ -n "${GITHUB_ACTIONS}" ]]; then
     echo "update-status=success" >> $GITHUB_OUTPUT
+    echo "project-name=$PROJECT_NAME" >> $GITHUB_OUTPUT
     echo "managers=$MANAGERS" >> $GITHUB_OUTPUT
   fi
 else
-  echo "💥 Some updates failed"
+  echo "💥 Update failed"
   
   if [[ -n "${GITHUB_ACTIONS}" ]]; then
     echo "update-status=failed" >> $GITHUB_OUTPUT
