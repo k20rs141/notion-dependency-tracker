@@ -153,7 +153,7 @@ create_or_update_project() {
   "パッケージマネージャー": { 
     "select": { "name": "${library_types}" } 
   },
-  "更新日時": { 
+  "更新日": { 
     "date": { "start": "${update_time_iso}" } 
   }
 }
