@@ -9,61 +9,61 @@ set -eo pipefail
 echo "🔧 Project: ${PROJECT_NAME}"
 echo "🌿 Branch: ${GITHUB_REF_NAME:-unknown}"
 echo "🚀 Event: ${GITHUB_EVENT_NAME:-unknown}"
-echo "🔑 NOTION_DATABASE_ID: ${NOTION_DATABASE_ID}"
-echo "🔑 NOTION_TOKEN length: ${#NOTION_TOKEN}"
 
-# ── 依存関係の変更検出 ──
+# ── 依存関係の変更検出（修正版） ──
 detect_library_changes() {
   local library_types=""
   
   if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-    echo "🔍 Manual execution - checking current dependency files..."
+    # ログメッセージを標準エラーに出力（戻り値に混入させない）
+    echo "🔍 Manual execution - checking current dependency files..." >&2
     
     if [[ -f "Podfile.lock" ]]; then
       library_types="${library_types}CocoaPods,"
-      echo "📦 Found: Podfile.lock"
+      echo "📦 Found: Podfile.lock" >&2
     fi
     
     if find . -name "Package.resolved" -type f | head -1 | read -r; then
       library_types="${library_types}SPM,"
-      echo "📦 Found: Package.resolved files"
+      echo "📦 Found: Package.resolved files" >&2
     fi
     
     if [[ -z "$library_types" ]]; then
-      echo "⚠️ No dependency files found"
+      echo "⚠️ No dependency files found" >&2
       exit 0
     fi
   else
-    echo "🔍 Push event - detecting changed dependency files..."
+    echo "🔍 Push event - detecting changed dependency files..." >&2
     
     CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
     
     if [[ -z "$CHANGED_FILES" ]]; then
-      echo "⚠️ No changed files detected"
+      echo "⚠️ No changed files detected" >&2
       exit 0
     fi
     
-    echo "Changed files:"
+    echo "Changed files:" >&2
     echo "$CHANGED_FILES" | while read -r file; do
-      [[ -n "$file" ]] && echo "  - $file"
+      [[ -n "$file" ]] && echo "  - $file" >&2
     done
     
     if echo "$CHANGED_FILES" | grep -q "^Podfile\.lock$"; then
       library_types="${library_types}CocoaPods,"
-      echo "✅ CocoaPods dependency changed"
+      echo "✅ CocoaPods dependency changed" >&2
     fi
     
     if echo "$CHANGED_FILES" | grep -q "Package\.resolved$"; then
       library_types="${library_types}SPM,"
-      echo "✅ SPM dependency changed"
+      echo "✅ SPM dependency changed" >&2
     fi
     
     if [[ -z "$library_types" ]]; then
-      echo "ℹ️ No dependency changes detected"
+      echo "ℹ️ No dependency changes detected" >&2
       exit 0
     fi
   fi
   
+  # 末尾のカンマを除去して標準出力に出力（戻り値として使用）
   library_types=${library_types%,}
   echo "$library_types"
 }
@@ -81,11 +81,11 @@ now_iso=$(date -u +%FT%TZ)
 now_jst=$(TZ='Asia/Tokyo' date '+%Y-%m-%d %H:%M:%S')
 echo "🕐 Update Time: ${now_jst} (JST)"
 
-# ── Notion API関数（デバッグ版） ──
+# ── Notion API関数（修正版） ──
 search_existing_project() {
   local project_name="$1"
   
-  echo "🔍 Searching with project name: '${project_name}'"
+  echo "🔍 Searching for existing project: ${project_name}"
   
   local filter_payload=$(cat <<JSON
 {
@@ -111,6 +111,8 @@ JSON
   
   echo "🔍 Search response:"
   echo "$response"
+  
+  # レスポンスを戻り値として返す（二重出力を回避）
   echo "$response"
 }
 
@@ -119,20 +121,25 @@ create_or_update_project() {
   local library_types="$2"
   local update_time_iso="$3"
   
-  echo "🔍 Searching for existing project: ${project_name}"
-  
   local search_result
   search_result=$(search_existing_project "$project_name")
   
+  # レスポンスから最後の行（実際のJSONレスポンス）を取得
+  local json_response
+  json_response=$(echo "$search_result" | tail -n 1)
+  
+  echo "🔍 JSON response for processing:"
+  echo "$json_response"
+  
   local existing_page_id
-  existing_page_id=$(echo "$search_result" | ruby -rjson -e "
+  existing_page_id=$(echo "$json_response" | ruby -rjson -e "
     begin
       data = JSON.parse(STDIN.read)
       if data['results'] && data['results'].length > 0
         puts data['results'][0]['id']
       end
     rescue => e
-      puts \"Ruby error: #{e.message}\"
+      STDERR.puts \"Ruby error: #{e.message}\"
     end
   ")
   
@@ -184,7 +191,6 @@ JSON
       return 0
     else
       echo "❌ Failed to update: ${project_name}"
-      echo "Response: $update_response"
       return 1
     fi
   else
@@ -216,7 +222,6 @@ JSON
       return 0
     else
       echo "❌ Failed to create: ${project_name}"
-      echo "Response: $create_response"
       return 1
     fi
   fi
