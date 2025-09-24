@@ -15,26 +15,21 @@ now_iso=$(date -u +%FT%TZ)
 now_jst=$(TZ='Asia/Tokyo' date '+%Y-%m-%d %H:%M:%S')
 echo "🕐 Update Time: ${now_jst} (JST)"
 
-# ── 依存関係の変更検出（個別処理版） ──
+# ── 依存関係の変更検出（シンプル版） ──
 detect_dependency_changes() {
-  local -a managers=()  # 配列として宣言
+  local managers=""
   
   if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
     echo "🔍 Manual execution - checking current dependency files..."
     
     if [[ -f "Podfile.lock" ]]; then
-      managers+=("CocoaPods")
+      managers="${managers}CocoaPods "
       echo "📦 Found: Podfile.lock"
     fi
     
-    if find . -name "Package.resolved" -type f | head -1 | read -r; then
-      managers+=("SPM")
+    if find . -name "Package.resolved" -type f 2>/dev/null | head -1 >/dev/null; then
+      managers="${managers}SPM "
       echo "📦 Found: Package.resolved files"
-    fi
-    
-    if [[ ${#managers[@]} -eq 0 ]]; then
-      echo "⚠️ No dependency files found"
-      exit 0
     fi
   else
     echo "🔍 Push event - detecting changed dependency files..."
@@ -47,36 +42,27 @@ detect_dependency_changes() {
     fi
     
     echo "Changed files:"
-    echo "$CHANGED_FILES" | while read -r file; do
-      [[ -n "$file" ]] && echo "  - $file"
-    done
+    echo "$CHANGED_FILES"
     
     if echo "$CHANGED_FILES" | grep -q "^Podfile\.lock$"; then
-      managers+=("CocoaPods")
+      managers="${managers}CocoaPods "
       echo "✅ CocoaPods dependency changed"
     fi
     
     if echo "$CHANGED_FILES" | grep -q "Package\.resolved$"; then
-      managers+=("SPM")
+      managers="${managers}SPM "
       echo "✅ SPM dependency changed"
-    fi
-    
-    if [[ ${#managers[@]} -eq 0 ]]; then
-      echo "ℹ️ No dependency changes detected"
-      exit 0
     fi
   fi
   
-  # 配列を改行区切りで返す
-  printf '%s\n' "${managers[@]}"
+  # スペース区切りで出力（余計な処理を避ける）
+  echo "${managers}"
 }
 
 # ── Notion API関数 ──
 search_existing_project() {
   local project_name="$1"
   local package_manager="$2"
-  
-  echo "🔍 Searching for existing project: ${project_name} (${package_manager})"
   
   local filter_payload=$(cat <<JSON
 {
@@ -112,6 +98,8 @@ create_or_update_project() {
   local package_manager="$2"
   local update_time_iso="$3"
   
+  echo "🔍 Processing: ${project_name} (${package_manager})"
+  
   local search_result
   search_result=$(search_existing_project "$project_name" "$package_manager")
   
@@ -123,11 +111,9 @@ create_or_update_project() {
         puts data['results'][0]['id']
       end
     rescue => e
-      STDERR.puts \"Ruby error: #{e.message}\"
+      # エラー時は何もしない（新規作成）
     end
   ")
-  
-  echo "🔍 Existing page ID for ${package_manager}: '${existing_page_id}'"
   
   local properties=$(cat <<JSON
 {
@@ -137,7 +123,7 @@ create_or_update_project() {
   "パッケージマネージャー": { 
     "select": { "name": "${package_manager}" } 
   },
-  "更新日": { 
+  "更新日時": { 
     "date": { "start": "${update_time_iso}" } 
   }
 }
@@ -166,7 +152,7 @@ JSON
       return 0
     else
       echo "❌ Failed to update: ${project_name} (${package_manager})"
-      echo "Response: $update_response"
+      echo "Error: $update_response"
       return 1
     fi
   else
@@ -192,53 +178,53 @@ JSON
       return 0
     else
       echo "❌ Failed to create: ${project_name} (${package_manager})"
-      echo "Response: $create_response"
+      echo "Error: $create_response"
       return 1
     fi
   fi
 }
 
-# ── 依存関係管理ツールを個別に処理 ──
+# ── メイン処理 ──
 echo "🚀 Detecting dependency changes..."
 
-# 変更された依存関係管理ツールを取得
-readarray -t DEPENDENCY_MANAGERS < <(detect_dependency_changes)
+managers_output=$(detect_dependency_changes)
 
-if [[ ${#DEPENDENCY_MANAGERS[@]} -eq 0 ]]; then
+if [[ -z "$managers_output" ]]; then
   echo "🏁 No dependency updates needed"
   exit 0
 fi
 
-echo "📦 Found ${#DEPENDENCY_MANAGERS[@]} dependency manager(s): ${DEPENDENCY_MANAGERS[*]}"
+echo "📦 Found dependency managers: ${managers_output}"
 
-# ── 各パッケージマネージャーを個別にNotionに登録 ──
+# ── 各パッケージマネージャーを個別に処理 ──
 echo "🚀 Updating Notion database..."
 
 all_success=true
-for manager in "${DEPENDENCY_MANAGERS[@]}"; do
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Processing: ${manager}"
+
+# スペース区切りの文字列を配列のように処理
+for manager in $managers_output; do
+  [[ -z "$manager" ]] && continue
+  
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   
   if ! create_or_update_project "$PROJECT_NAME" "$manager" "$now_iso"; then
     all_success=false
   fi
   
-  echo ""  # 空行で区切り
+  echo ""
 done
 
 # ── 結果処理 ──
 if $all_success; then
-  echo "🎉 Successfully updated all ${#DEPENDENCY_MANAGERS[@]} dependency manager(s) in Notion!"
+  echo "🎉 Successfully updated Notion database!"
   
   if [[ -n "${GITHUB_ACTIONS}" ]]; then
     echo "update-status=success" >> $GITHUB_OUTPUT
     echo "project-name=$PROJECT_NAME" >> $GITHUB_OUTPUT
-    echo "managers-count=${#DEPENDENCY_MANAGERS[@]}" >> $GITHUB_OUTPUT
-    echo "managers=${DEPENDENCY_MANAGERS[*]}" >> $GITHUB_OUTPUT
+    echo "managers=$managers_output" >> $GITHUB_OUTPUT
   fi
 else
-  echo "💥 Some dependency managers failed to update"
+  echo "💥 Some updates failed"
   
   if [[ -n "${GITHUB_ACTIONS}" ]]; then
     echo "update-status=failed" >> $GITHUB_OUTPUT
