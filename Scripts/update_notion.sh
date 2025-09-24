@@ -30,7 +30,7 @@ if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
     echo "📦 Found: Podfile.lock"
   fi
   
-  if ls **/Package.resolved 2>/dev/null >/dev/null; then
+  if [[ -f "Package.resolved" ]] || find . -type f -name "Package.resolved" -print -quit | grep -q .; then
     MANAGERS="$MANAGERS SPM"
     echo "📦 Found: Package.resolved files"
   fi
