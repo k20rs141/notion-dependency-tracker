@@ -1,6 +1,6 @@
 PODS:
   - Alamofire (5.11.2)
-  - SDWebImage (5.19.0)
+  - SDWebImage (4.19.0)
 
 DEPENDENCIES:
   - Alamofire
